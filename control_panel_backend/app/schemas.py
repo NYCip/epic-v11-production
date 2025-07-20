@@ -1,8 +1,9 @@
 """Pydantic schemas for API validation"""
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from uuid import UUID
+import re
 
 # User schemas
 class UserBase(BaseModel):
@@ -11,7 +12,23 @@ class UserBase(BaseModel):
     role: str = Field(default="viewer", pattern="^(admin|operator|viewer)$")
 
 class UserCreate(UserBase):
-    password: str = Field(min_length=8)
+    password: str = Field(min_length=12, max_length=128, description="Password must be 12-128 characters with uppercase, lowercase, digit, and special character")
+    
+    @validator('password')
+    def validate_password_strength(cls, v):
+        """Enforce strong password policy"""
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one digit')
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', v):
+            raise ValueError('Password must contain at least one special character')
+        # Check for common patterns
+        if any(pattern in v.lower() for pattern in ['password', '12345', 'qwerty', 'admin']):
+            raise ValueError('Password contains common patterns')
+        return v
 
 class UserLogin(BaseModel):
     username: EmailStr  # Using username for compatibility with OAuth2
@@ -34,6 +51,7 @@ class UserResponse(UserBase):
 # Token schemas
 class Token(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     
 class TokenData(BaseModel):

@@ -1,7 +1,8 @@
 """Main FastAPI application"""
 import os
+import logging
 from datetime import datetime
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langfuse import Langfuse
@@ -48,6 +49,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "http://localhost:3000",  # Development frontend
         "https://epic.pos.com",
         "https://langfuse.epic.pos.com",
         "https://n8n.epic.pos.com"
@@ -56,6 +58,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses"""
+    response = await call_next(request)
+    
+    # Content Security Policy
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' https:; "
+        "connect-src 'self' https:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    response.headers["Content-Security-Policy"] = csp
+    
+    # Additional security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    
+    # HTTPS enforcement (in production)
+    if not request.url.hostname in ["localhost", "127.0.0.1"]:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+    
+    return response
 
 # System override middleware
 @app.middleware("http")
@@ -110,7 +145,7 @@ app.include_router(auth.router, prefix="/control")
 app.include_router(users.router, prefix="/control")
 app.include_router(system.router, prefix="/control")
 
-# Health check endpoint
+# Health check endpoint (no rate limit - monitoring)
 @app.get("/health")
 @app.get("/control/health")
 async def health_check():
@@ -146,9 +181,33 @@ async def health_check():
 
 # Root redirect
 @app.get("/control")
-async def root():
+@limiter.limit("1000/hour")
+async def root(request: Request):
     """Redirect to docs"""
     return {"message": "EPIC V11 Control Panel API", "docs": "/control/docs"}
+
+# Request size limiting middleware
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    """Limit request size to prevent DoS"""
+    if request.headers.get("content-length"):
+        content_length = int(request.headers["content-length"])
+        if content_length > 10_000_000:  # 10MB limit
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request too large"}
+            )
+    return await call_next(request)
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler to prevent information leakage"""
+    logging.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
 
 if __name__ == "__main__":
     import uvicorn

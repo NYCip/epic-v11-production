@@ -5,7 +5,7 @@ from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from .database import get_db
 from .models import User
@@ -16,7 +16,8 @@ SECRET_KEY = os.getenv("JWT_SECRET")
 if not SECRET_KEY:
     raise ValueError("JWT_SECRET environment variable is required")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 15  # 15 minutes
+REFRESH_TOKEN_EXPIRE_DAYS = 7  # 7 days
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -40,7 +41,19 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "type": "access"})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None):
+    """Create JWT refresh token"""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    
+    to_encode.update({"exp": expire, "type": "refresh"})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -65,11 +78,42 @@ def decode_token(token: str) -> TokenData:
             detail="Could not validate credentials"
         )
 
+def get_token_from_request(request: Request) -> str:
+    """Extract token from httpOnly cookie or Authorization header"""
+    # Try cookie first (preferred method)
+    token = request.cookies.get("access_token")
+    if token:
+        return token
+    
+    # Fallback to Authorization header for backward compatibility
+    authorization = request.headers.get("Authorization")
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[7:]  # Remove "Bearer " prefix
+    
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="No access token found",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
     db: Session = Depends(get_db)
 ) -> User:
     """Get current authenticated user"""
+    # Import here to avoid circular dependency
+    from .dependencies import is_token_blacklisted
+    
+    # Get token from cookie or header
+    token = get_token_from_request(request)
+    
+    # Check if token is blacklisted
+    if is_token_blacklisted(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked"
+        )
+    
     token_data = decode_token(token)
     
     user = db.query(User).filter(User.id == token_data.user_id).first()

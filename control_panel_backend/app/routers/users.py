@@ -3,6 +3,8 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.orm import Session
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from ..database import get_db
 from ..models import User
 from ..schemas import UserResponse, UserUpdate
@@ -11,8 +13,13 @@ from ..dependencies import log_audit
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
+# Initialize limiter
+limiter = Limiter(key_func=get_remote_address)
+
 @router.get("/", response_model=List[UserResponse])
+@limiter.limit("100/hour")
 async def list_users(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     role: Optional[str] = None,
@@ -32,7 +39,9 @@ async def list_users(
     return users
 
 @router.get("/{user_id}", response_model=UserResponse)
+@limiter.limit("100/hour")
 async def get_user(
+    request: Request,
     user_id: UUID,
     current_user: User = Depends(require_operator),
     db: Session = Depends(get_db)
@@ -47,6 +56,7 @@ async def get_user(
     return user
 
 @router.patch("/{user_id}", response_model=UserResponse)
+@limiter.limit("20/hour")
 async def update_user(
     user_id: UUID,
     user_update: UserUpdate,
@@ -92,6 +102,7 @@ async def update_user(
     return user
 
 @router.delete("/{user_id}")
+@limiter.limit("10/hour")
 async def delete_user(
     user_id: UUID,
     request: Request,
