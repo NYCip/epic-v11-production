@@ -5,6 +5,8 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.orm import Session
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from ..database import get_db
 from ..models import SystemOverride, AuditLog
 from ..schemas import SystemOverrideRequest, SystemOverrideResponse, AuditLogResponse
@@ -14,14 +16,18 @@ from ..models import User
 
 router = APIRouter(prefix="/system", tags=["System"])
 
+# Initialize limiter
+limiter = Limiter(key_func=get_remote_address)
+
 @router.post("/override/halt", response_model=SystemOverrideResponse)
+@limiter.limit("3/minute")
 async def halt_system(
     override_request: SystemOverrideRequest,
     request: Request,
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """EDWARD OVERRIDE: Halt all agent operations (admin only)"""
+    """EDWARD OVERRIDE: Halt all agent operations (admin only, rate limited: 3 per minute)"""
     # Check if already halted
     if check_system_override():
         raise HTTPException(

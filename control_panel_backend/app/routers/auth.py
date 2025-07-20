@@ -3,6 +3,8 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from ..database import get_db
 from ..models import User
 from ..schemas import Token, UserCreate, UserResponse, UserLogin
@@ -10,6 +12,9 @@ from ..auth import verify_password, get_password_hash, create_access_token, get_
 from ..dependencies import log_audit
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+# Initialize limiter
+limiter = Limiter(key_func=get_remote_address)
 
 @router.post("/register", response_model=UserResponse)
 async def register(
@@ -52,21 +57,23 @@ async def register(
     return user
 
 @router.post("/login", response_model=Token)
+@limiter.limit("5/minute")
 async def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    """Login with form data"""
+    """Login with form data (rate limited: 5 attempts per minute)"""
     return await _perform_login(request, form_data.username, form_data.password, db)
 
 @router.post("/login-json", response_model=Token)
+@limiter.limit("5/minute")
 async def login_json(
     request: Request,
     login_data: UserLogin,
     db: Session = Depends(get_db)
 ):
-    """Login with JSON data"""
+    """Login with JSON data (rate limited: 5 attempts per minute)"""
     return await _perform_login(request, login_data.username, login_data.password, db)
 
 async def _perform_login(request: Request, username: str, password: str, db: Session):
