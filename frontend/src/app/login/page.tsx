@@ -73,7 +73,11 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <div className="text-red-500 text-sm text-center">
+            <div
+              className="text-red-500 text-sm text-center"
+              role="alert"
+              aria-live="assertive"
+            >
               {error}
             </div>
           )}
@@ -82,6 +86,8 @@ export default function LoginPage() {
             type="submit"
             disabled={loading}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-50"
+            aria-busy={loading ? "true" : "false"}
+            aria-label={loading ? "Signing in, please wait" : "Sign In"}
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>

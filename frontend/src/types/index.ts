@@ -23,7 +23,7 @@ export interface BoardMember {
   role: string
   model: string
   has_veto: boolean
-  status: string
+  status: 'active' | 'inactive'
 }
 
 export interface BoardDecision {
