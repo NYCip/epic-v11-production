@@ -245,10 +245,8 @@ services:
 
 networks:
   epic_network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
+    external: true
+    name: epic-v11_epic_network
 
 volumes:
   postgres_data:
